@@ -21,9 +21,21 @@ final class RecordingRecord {
     var processingStateData: Data
     var liveEngineIdentifier: String?
     var liveEngineVersion: String?
+    // Added in Milestone 2. Optional so existing stores migrate automatically.
+    var diarizationEngineIdentifier: String?
+    var diarizationEngineVersion: String?
 
     @Relationship(deleteRule: .cascade, inverse: \TranscriptSegmentRecord.recording)
     var segments: [TranscriptSegmentRecord] = []
+    @Relationship(deleteRule: .cascade, inverse: \SpeakerClusterRecord.recording)
+    var speakerClusters: [SpeakerClusterRecord] = []
+    @Relationship(deleteRule: .cascade, inverse: \SpeakerTurnRecord.recording)
+    var speakerTurns: [SpeakerTurnRecord] = []
+    // Added in Milestone 3. Voice data is biometric-like and goes with its recording.
+    @Relationship(deleteRule: .cascade, inverse: \RecordingVoiceDataRecord.recording)
+    var voiceData: [RecordingVoiceDataRecord] = []
+    @Relationship(deleteRule: .cascade, inverse: \SpeakerAttributionRecord.recording)
+    var speakerAttributions: [SpeakerAttributionRecord] = []
 
     init(
         id: UUID,
@@ -67,6 +79,11 @@ final class TranscriptSegmentRecord {
     var editedAt: Date?
     /// Insertion order, used to keep untimed segments in arrival order.
     var orderIndex: Int
+    // Added in Milestone 2. Defaults let existing stores migrate automatically.
+    /// JSON-encoded `[TimedWord]`; nil when no word timing is known.
+    var wordsData: Data?
+    var speakerAssignedByUser: Bool = false
+    var speakerIsUncertain: Bool = false
 
     var recording: RecordingRecord?
 
@@ -99,6 +116,40 @@ final class TranscriptSegmentRecord {
     }
 }
 
+@Model
+final class SpeakerClusterRecord {
+    @Attribute(.unique) var id: UUID
+    var recordingID: UUID
+    var firstAppearance: TimeInterval
+    var recording: RecordingRecord?
+
+    init(id: UUID, recordingID: UUID, firstAppearance: TimeInterval) {
+        self.id = id
+        self.recordingID = recordingID
+        self.firstAppearance = firstAppearance
+    }
+}
+
+@Model
+final class SpeakerTurnRecord {
+    @Attribute(.unique) var id: UUID
+    var recordingID: UUID
+    var clusterID: UUID
+    var startTime: TimeInterval
+    var endTime: TimeInterval
+    var isUncertain: Bool
+    var recording: RecordingRecord?
+
+    init(id: UUID, recordingID: UUID, clusterID: UUID, startTime: TimeInterval, endTime: TimeInterval, isUncertain: Bool) {
+        self.id = id
+        self.recordingID = recordingID
+        self.clusterID = clusterID
+        self.startTime = startTime
+        self.endTime = endTime
+        self.isUncertain = isUncertain
+    }
+}
+
 // MARK: - Mapping
 
 extension RecordingRecord {
@@ -111,7 +162,8 @@ extension RecordingRecord {
             audioFile: AudioFileReference(fileName: audioFileName, sampleRate: sampleRate, channelCount: channelCount),
             recordingState: RecordingState(rawValue: recordingStateRaw) ?? .interrupted,
             processingState: (try? JSONDecoder().decode(ProcessingState.self, from: processingStateData)) ?? .notStarted,
-            liveTranscriptionEngine: liveEngineIdentifier.map { EngineDescriptor(identifier: $0, version: liveEngineVersion) }
+            liveTranscriptionEngine: liveEngineIdentifier.map { EngineDescriptor(identifier: $0, version: liveEngineVersion) },
+            diarizationEngine: diarizationEngineIdentifier.map { EngineDescriptor(identifier: $0, version: diarizationEngineVersion) }
         )
     }
 
@@ -126,6 +178,8 @@ extension RecordingRecord {
         processingStateData = try Self.encode(recording.processingState)
         liveEngineIdentifier = recording.liveTranscriptionEngine?.identifier
         liveEngineVersion = recording.liveTranscriptionEngine?.version
+        diarizationEngineIdentifier = recording.diarizationEngine?.identifier
+        diarizationEngineVersion = recording.diarizationEngine?.version
     }
 
     static func encode(_ state: ProcessingState) throws -> Data {
@@ -150,6 +204,8 @@ extension RecordingRecord {
             liveEngineIdentifier: recording.liveTranscriptionEngine?.identifier,
             liveEngineVersion: recording.liveTranscriptionEngine?.version
         )
+        diarizationEngineIdentifier = recording.diarizationEngine?.identifier
+        diarizationEngineVersion = recording.diarizationEngine?.version
     }
 }
 
@@ -168,8 +224,20 @@ extension TranscriptSegmentRecord {
             source: EngineDescriptor(identifier: sourceIdentifier, version: sourceVersion),
             speakerClusterID: speakerClusterID,
             transcriptionConfidence: transcriptionConfidence,
-            editedAt: editedAt
+            editedAt: editedAt,
+            words: Self.decodeWords(wordsData),
+            speakerAssignedByUser: speakerAssignedByUser,
+            speakerIsUncertain: speakerIsUncertain
         )
+    }
+
+    static func decodeWords(_ data: Data?) -> [TimedWord] {
+        guard let data else { return [] }
+        return (try? JSONDecoder().decode([TimedWord].self, from: data)) ?? []
+    }
+
+    static func encodeWords(_ words: [TimedWord]) -> Data? {
+        words.isEmpty ? nil : try? JSONEncoder().encode(words)
     }
 
     func update(from segment: TranscriptSegment) {
@@ -183,6 +251,9 @@ extension TranscriptSegmentRecord {
         speakerClusterID = segment.speakerClusterID
         transcriptionConfidence = segment.transcriptionConfidence
         editedAt = segment.editedAt
+        wordsData = Self.encodeWords(segment.words)
+        speakerAssignedByUser = segment.speakerAssignedByUser
+        speakerIsUncertain = segment.speakerIsUncertain
     }
 
     convenience init(from segment: TranscriptSegment, orderIndex: Int) {
@@ -199,6 +270,27 @@ extension TranscriptSegmentRecord {
             transcriptionConfidence: segment.transcriptionConfidence,
             editedAt: segment.editedAt,
             orderIndex: orderIndex
+        )
+        wordsData = Self.encodeWords(segment.words)
+        speakerAssignedByUser = segment.speakerAssignedByUser
+        speakerIsUncertain = segment.speakerIsUncertain
+    }
+}
+
+extension SpeakerClusterRecord {
+    func toDomain() -> SpeakerCluster {
+        SpeakerCluster(id: id, recordingID: recordingID, firstAppearance: firstAppearance)
+    }
+}
+
+extension SpeakerTurnRecord {
+    func toDomain() -> SpeakerTurn {
+        SpeakerTurn(
+            id: id,
+            recordingID: recordingID,
+            clusterID: clusterID,
+            timeRange: TimeRange(start: startTime, end: endTime),
+            isUncertain: isUncertain
         )
     }
 }
