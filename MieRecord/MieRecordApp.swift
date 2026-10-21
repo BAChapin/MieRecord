@@ -7,9 +7,12 @@ import SwiftUI
 
 @main
 struct MieRecordApp: App {
+    @State private var dependencies = AppDependencies.live()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RecordingListView()
+                .environment(dependencies)
         }
     }
 }
