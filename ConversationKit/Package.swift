@@ -18,6 +18,14 @@ let package = Package(
         .library(name: "ConversationML", targets: ["ConversationML"]),
         .library(name: "ConversationPipeline", targets: ["ConversationPipeline"]),
         .library(name: "ConversationStorage", targets: ["ConversationStorage"]),
+        .library(name: "ConversationDiarization", targets: ["ConversationDiarization"]),
+    ],
+    dependencies: [
+        // Speaker diarization (Core ML, on device). Pinned exactly: model
+        // compatibility and the offline loading path were verified against this
+        // release. `traits: []` drops the default NemoTextProcessing trait so its
+        // prebuilt text-normalization binary is never linked.
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7", traits: []),
     ],
     targets: [
         // Domain entities, processing states, speaker policy, repository protocols.
@@ -34,6 +42,17 @@ let package = Package(
         ),
         // SwiftData persistence and on-disk audio file management.
         .target(name: "ConversationStorage", dependencies: ["ConversationCore"]),
+        // Adapter from FluidAudio to `SpeakerDiarizationEngine`. Kept separate so
+        // the engine can be replaced without touching other modules, and so the
+        // rest of the package builds and tests without FluidAudio.
+        .target(
+            name: "ConversationDiarization",
+            dependencies: [
+                "ConversationCore",
+                "ConversationML",
+                .product(name: "FluidAudio", package: "FluidAudio"),
+            ]
+        ),
 
         .testTarget(name: "ConversationCoreTests", dependencies: ["ConversationCore"]),
         .testTarget(
@@ -41,6 +60,11 @@ let package = Package(
             dependencies: ["ConversationPipeline", "ConversationCore", "ConversationAudio", "ConversationML"]
         ),
         .testTarget(name: "ConversationMLTests", dependencies: ["ConversationML"]),
+        .testTarget(
+            name: "ConversationDiarizationTests",
+            dependencies: ["ConversationDiarization", "ConversationCore", "ConversationML"],
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(name: "ConversationStorageTests", dependencies: ["ConversationStorage", "ConversationCore"]),
     ],
     swiftLanguageModes: [.v6]
