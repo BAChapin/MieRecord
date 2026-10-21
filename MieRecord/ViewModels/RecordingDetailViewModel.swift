@@ -11,7 +11,7 @@ struct SpeakerOption: Identifiable, Equatable {
     /// Position in first-appearance order; drives the speaker's color.
     let index: Int
     /// Set when the speaker is matched or assigned to a known person.
-    var person: IdentifiedSpeaker? = nil
+    var person: IdentifiedSpeaker?
     /// Whether voice data exists, so the voice can be enrolled.
     var hasVoiceprint: Bool = false
 

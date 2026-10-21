@@ -30,7 +30,10 @@ struct EnrollmentView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("A voiceprint is a mathematical summary of how someone sounds. It is stored only on this device, is used to suggest names in your recordings, and can be deleted at any time from People.")
+                    Text(
+                        "A voiceprint is a mathematical summary of how someone sounds. It is stored only on this "
+                            + "device, is used to suggest names in your recordings, and can be deleted at any time from People."
+                    )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

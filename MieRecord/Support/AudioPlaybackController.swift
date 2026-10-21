@@ -32,7 +32,11 @@ final class AudioPlaybackController {
     }
 
     func togglePlayback() {
-        isPlaying ? pause() : play()
+        if isPlaying {
+            pause()
+        } else {
+            play()
+        }
     }
 
     func play() {

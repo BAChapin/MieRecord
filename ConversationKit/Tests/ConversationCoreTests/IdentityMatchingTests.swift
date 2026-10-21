@@ -87,9 +87,11 @@ struct IdentityMatcherTests {
     @Test("provisional tiers: ≥0.85 recognized, ≥0.70 needs verification, below stays Speaker N")
     func tiers() {
         let high = cluster(voice(0.9)), mid = cluster(voice(0.8)), low = cluster(voice(0.5))
-        for (print, expected) in [(high, SpeakerAttributionStatus.recognized(profileID: brett)),
-                                  (mid, .needsVerification(profileID: brett)),
-                                  (low, .unidentified)] {
+        for (print, expected) in [
+            (high, SpeakerAttributionStatus.recognized(profileID: brett)),
+            (mid, .needsVerification(profileID: brett)),
+            (low, .unidentified),
+        ] {
             let result = decide([print], profiles: [(brett, axisVector(0))])
             #expect(result[print.clusterID]?.status == expected)
             #expect(result[print.clusterID]?.evidence?.calibratedConfidence == nil, "no probability while provisional")

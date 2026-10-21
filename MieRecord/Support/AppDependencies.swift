@@ -76,6 +76,7 @@ final class AppDependencies {
         } catch {
             startupError = "Persistent storage is unavailable (\(error.localizedDescription)). Recordings made now will not be kept."
             // An in-memory container cannot fail for a valid schema.
+            // swiftlint:disable:next force_try
             container = try! ConversationStorage.makeModelContainer(inMemory: true)
         }
 

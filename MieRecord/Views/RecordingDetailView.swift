@@ -121,7 +121,8 @@ struct RecordingDetailView: View {
         switch action {
         case .retranscribe:
             let edits = viewModel?.hasTextOrSpeakerEdits == true ? " Your corrections will be replaced." : ""
-            return "The transcript will be rebuilt on this device from the saved audio and will replace the current text. The audio is not changed. If it fails, the current transcript is kept." + edits
+            return "The transcript will be rebuilt on this device from the saved audio and will replace the current text. "
+                + "The audio is not changed. If it fails, the current transcript is kept." + edits
         case .identifyAgain:
             return "Speakers will be detected again from the saved audio and the labels may change." + corrections
         }

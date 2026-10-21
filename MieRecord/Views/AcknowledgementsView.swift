@@ -26,12 +26,23 @@ struct AcknowledgementsView: View {
                 }
 
                 Section("Speaker detection models") {
-                    Text("Speaker detection uses modified Core ML conversions, made by Fluid Inference, of the pyannote speaker-diarization-community-1 pipeline by pyannote, with WeSpeaker speaker embeddings and PLDA parameters from Brno University of Technology / BUT Speech@FIT.")
+                    Text(
+                        "Speaker detection uses modified Core ML conversions, made by Fluid Inference, "
+                            + "of the pyannote speaker-diarization-community-1 pipeline by pyannote, "
+                            + "with WeSpeaker speaker embeddings and PLDA parameters from "
+                            + "Brno University of Technology / BUT Speech@FIT."
+                    )
                     Text("Licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).")
                     Link("CC BY 4.0 license", destination: URL(string: "https://creativecommons.org/licenses/by/4.0/")!)
                     Link("Model source (FluidInference/speaker-diarization-coreml)", destination: URL(string: "https://huggingface.co/FluidInference/speaker-diarization-coreml")!)
                     Link("pyannote/speaker-diarization-community-1", destination: URL(string: "https://huggingface.co/pyannote/speaker-diarization-community-1")!)
-                    Text("Citations: Plaquet & Bredin, \"Powerset multi-class cross entropy loss for neural speaker diarization\", Interspeech 2023. Wang et al., \"WeSpeaker: A research and production oriented speaker embedding learning toolkit\", ICASSP 2023. Landini, Profant, Diez & Burget, \"Bayesian HMM clustering of x-vector sequences (VBx) in speaker diarization\", Computer Speech & Language, 2022.")
+                    Text(
+                        "Citations: Plaquet & Bredin, \"Powerset multi-class cross entropy loss for neural speaker "
+                            + "diarization\", Interspeech 2023. Wang et al., \"WeSpeaker: A research and production "
+                            + "oriented speaker embedding learning toolkit\", ICASSP 2023. Landini, Profant, Diez & "
+                            + "Burget, \"Bayesian HMM clustering of x-vector sequences (VBx) in speaker diarization\", "
+                            + "Computer Speech & Language, 2022."
+                    )
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

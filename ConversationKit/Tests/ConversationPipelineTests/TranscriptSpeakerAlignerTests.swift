@@ -12,8 +12,10 @@ struct TranscriptSpeakerAlignerTests {
 
     private func timeline(_ turns: [(UUID, Double, Double)]) -> SpeakerTimeline {
         SpeakerTimeline(
-            clusters: [SpeakerCluster(id: a, recordingID: recording, firstAppearance: 0),
-                       SpeakerCluster(id: b, recordingID: recording, firstAppearance: 0)],
+            clusters: [
+                SpeakerCluster(id: a, recordingID: recording, firstAppearance: 0),
+                SpeakerCluster(id: b, recordingID: recording, firstAppearance: 0),
+            ],
             turns: turns.map { SpeakerTurn(recordingID: recording, clusterID: $0.0, timeRange: TimeRange(start: $0.1, end: $0.2)) }
         )
     }
@@ -35,8 +37,10 @@ struct TranscriptSpeakerAlignerTests {
 
     @Test("a sentence crossing a turn boundary is split at the word where the speaker changes")
     func splitsAtSpeakerChange() {
-        let original = segment([word("Are", 0, 0.3), word(" you", 0.3, 0.5), word(" there?", 0.5, 0.9),
-                                word(" Yes,", 1.0, 1.3), word(" I", 1.3, 1.4), word(" am.", 1.4, 1.8)])
+        let original = segment([
+            word("Are", 0, 0.3), word(" you", 0.3, 0.5), word(" there?", 0.5, 0.9),
+            word(" Yes,", 1.0, 1.3), word(" I", 1.3, 1.4), word(" am.", 1.4, 1.8),
+        ])
         let result = TranscriptSpeakerAligner.align([original], to: timeline([(a, 0, 0.95), (b, 0.95, 2)]))
 
         #expect(result.map(\.text) == ["Are you there?", "Yes, I am."])

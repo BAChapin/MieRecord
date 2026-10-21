@@ -83,8 +83,10 @@ struct SwiftDataRecordingRepositoryTests {
         let segment = TranscriptSegment(
             recordingID: recording.id, timeRange: TimeRange(start: 1, end: 2), text: "Hi there", isFinal: true,
             source: EngineDescriptor(identifier: "e"), speakerClusterID: cluster.id,
-            words: [TimedWord(text: "Hi", timeRange: TimeRange(start: 1, end: 1.4), confidence: 0.9),
-                    TimedWord(text: " there", timeRange: TimeRange(start: 1.4, end: 2))],
+            words: [
+                TimedWord(text: "Hi", timeRange: TimeRange(start: 1, end: 1.4), confidence: 0.9),
+                TimedWord(text: " there", timeRange: TimeRange(start: 1.4, end: 2)),
+            ],
             speakerAssignedByUser: true, speakerIsUncertain: true
         )
         try await repository.saveSegments([segment])
