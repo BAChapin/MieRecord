@@ -1,6 +1,7 @@
 # Continuous integration for MieRecord.
 #
-# Runs on every push to `main` (see CLAUDE.md, "CI Practices"):
+# Runs on every push to `main` and on pull requests targeting it (see
+# CLAUDE.md, "CI Practices"; Show/Ask PRs need a green run before merge):
 #   lint       - SwiftLint over the app and package sources
 #   build      - app scheme for the iOS Simulator
 #   unit-tests - ConversationKit package tests on the iOS Simulator
@@ -12,6 +13,8 @@ name: CI
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
