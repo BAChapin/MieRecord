@@ -12,6 +12,8 @@
 		B10000000000000000000003 /* ConversationML in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000003 /* ConversationML */; };
 		B10000000000000000000004 /* ConversationPipeline in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000004 /* ConversationPipeline */; };
 		B10000000000000000000005 /* ConversationStorage in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000005 /* ConversationStorage */; };
+		B10000000000000000000006 /* ConversationDiarization in Frameworks */ = {isa = PBXBuildFile; productRef = C10000000000000000000006 /* ConversationDiarization */; };
+		B10000000000000000000007 /* DiarizationModels in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000031 /* DiarizationModels */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -27,6 +29,7 @@
 /* Begin PBXFileReference section */
 		A10000000000000000000001 /* MieRecord.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MieRecord.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000020 /* MieRecordUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = file; path = MieRecordUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000031 /* DiarizationModels */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DiarizationModels; path = Models/DiarizationModels; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -52,6 +55,7 @@
 				B10000000000000000000003 /* ConversationML in Frameworks */,
 				B10000000000000000000004 /* ConversationPipeline in Frameworks */,
 				B10000000000000000000005 /* ConversationStorage in Frameworks */,
+				B10000000000000000000006 /* ConversationDiarization in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -70,6 +74,7 @@
 			children = (
 				A10000000000000000000002 /* MieRecord */,
 				A10000000000000000000021 /* MieRecordUITests */,
+				A10000000000000000000031 /* DiarizationModels */,
 				A10000000000000000000005 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -108,6 +113,7 @@
 				C10000000000000000000003 /* ConversationML */,
 				C10000000000000000000004 /* ConversationPipeline */,
 				C10000000000000000000005 /* ConversationStorage */,
+				C10000000000000000000006 /* ConversationDiarization */,
 			);
 			productName = MieRecord;
 			productReference = A10000000000000000000001 /* MieRecord.app */;
@@ -183,6 +189,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000000000000000000007 /* DiarizationModels in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -503,6 +510,10 @@
 		C10000000000000000000005 /* ConversationStorage */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ConversationStorage;
+		};
+		C10000000000000000000006 /* ConversationDiarization */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ConversationDiarization;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

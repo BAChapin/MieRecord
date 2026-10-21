@@ -5,6 +5,8 @@ struct RecordingListView: View {
     @Environment(AppDependencies.self) private var dependencies
     @State private var viewModel: RecordingListViewModel?
     @State private var isRecording = false
+    @State private var isShowingAcknowledgements = false
+    @State private var isShowingPeople = false
 
     var body: some View {
         NavigationStack {
@@ -17,6 +19,20 @@ struct RecordingListView: View {
             }
             .navigationTitle("Recordings")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isShowingAcknowledgements = true
+                    } label: {
+                        Label("Acknowledgements", systemImage: "info.circle")
+                    }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        isShowingPeople = true
+                    } label: {
+                        Label("People", systemImage: "person.2")
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
                         isRecording = true
@@ -32,6 +48,13 @@ struct RecordingListView: View {
             }
             await viewModel?.load()
         }
+        .sheet(isPresented: $isShowingAcknowledgements) {
+            AcknowledgementsView()
+        }
+        .sheet(isPresented: $isShowingPeople) {
+            PeopleView()
+                .environment(dependencies)
+        }
         .fullScreenCover(isPresented: $isRecording) {
             RecordingView()
                 .environment(dependencies)
@@ -41,7 +64,7 @@ struct RecordingListView: View {
                 Task { await viewModel?.load() }
             }
         }
-        .onChange(of: dependencies.transcriptionJobs.revision) { _, _ in
+        .onChange(of: dependencies.processingJobs.revision) { _, _ in
             Task { await viewModel?.load() }
         }
     }
@@ -76,7 +99,7 @@ struct RecordingListView: View {
                         NavigationLink(value: recording) {
                             RecordingRow(
                                 recording: recording,
-                                isTranscribing: dependencies.transcriptionJobs.isRunning(recording.id)
+                                jobStatus: dependencies.processingJobs.status[recording.id]
                             )
                         }
                     }
@@ -95,7 +118,7 @@ struct RecordingListView: View {
 
 private struct RecordingRow: View {
     let recording: Recording
-    let isTranscribing: Bool
+    let jobStatus: ProcessingJobs.Status?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -111,14 +134,23 @@ private struct RecordingRow: View {
                     Label("Interrupted", systemImage: "exclamationmark.circle")
                         .foregroundStyle(.orange)
                 }
-                if isTranscribing {
+                if let jobStatus {
                     Text("·")
-                    Label("Transcribing", systemImage: "waveform.badge.magnifyingglass")
+                    Label(jobStatus.description, systemImage: "waveform.badge.magnifyingglass")
                         .foregroundStyle(.tint)
-                } else if case .failed = recording.processingState {
-                    Text("·")
-                    Label("Transcription failed", systemImage: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
+                } else {
+                    switch recording.processingState {
+                    case .failed:
+                        Text("·")
+                        Label("Processing failed", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.orange)
+                    case .needsReview:
+                        Text("·")
+                        Label("Needs review", systemImage: "questionmark.circle")
+                            .foregroundStyle(.orange)
+                    case .notStarted, .queued, .processing, .ready:
+                        EmptyView()
+                    }
                 }
             }
             .font(.subheadline)

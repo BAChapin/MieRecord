@@ -1,5 +1,6 @@
 import ConversationAudio
 import ConversationCore
+import ConversationDiarization
 import ConversationML
 import ConversationPipeline
 import ConversationStorage
@@ -15,26 +16,51 @@ final class AppDependencies {
     let repository: any RecordingRepository
     let audioFileStore: any AudioFileStore
     let transcriptionEngine: (any StreamingTranscriptionEngine)?
-    let transcriptionJobs: TranscriptionJobs
+    let processingJobs: ProcessingJobs
+    let speakerEditor: SpeakerEditor
+    let identity: IdentityService
     /// Non-nil when persistent storage could not be opened; the app then runs
     /// on an in-memory store so recording still works for the session.
     let startupError: String?
 
     init(
         repository: any RecordingRepository,
+        identityRepository: any SpeakerIdentityRepository,
         audioFileStore: any AudioFileStore,
         transcriptionEngine: (any StreamingTranscriptionEngine)?,
         fileTranscriptionEngine: any FileTranscriptionEngine,
+        diarizationEngine: (any SpeakerDiarizationEngine)?,
         startupError: String? = nil
     ) {
         self.repository = repository
         self.audioFileStore = audioFileStore
         self.transcriptionEngine = transcriptionEngine
-        self.transcriptionJobs = TranscriptionJobs(service: RetranscriptionService(
+        // One retranscription service is shared so a recording can never be
+        // re-transcribed twice at once, whichever path starts it.
+        let retranscription = RetranscriptionService(
             repository: repository,
             audioFileStore: audioFileStore,
             engine: fileTranscriptionEngine
-        ))
+        )
+        // Profiles are only comparable with voiceprints from the same engine.
+        let identity = IdentityService(
+            recordings: repository,
+            identity: identityRepository,
+            currentEngine: diarizationEngine?.descriptor
+        )
+        self.identity = identity
+        self.processingJobs = ProcessingJobs(
+            retranscription: retranscription,
+            postProcessing: PostProcessingCoordinator(
+                repository: repository,
+                audioFileStore: audioFileStore,
+                retranscription: retranscription,
+                diarizer: diarizationEngine,
+                identityRepository: identityRepository,
+                identity: identity
+            )
+        )
+        self.speakerEditor = SpeakerEditor(repository: repository, identity: identityRepository)
         self.startupError = startupError
     }
 
@@ -63,11 +89,17 @@ final class AppDependencies {
 
         // One Apple engine serves both live and whole-file transcription.
         let speechEngine = AppleSpeechTranscriptionEngine(locale: .current)
+        let store = SwiftDataRecordingRepository(modelContainer: container)
         return AppDependencies(
-            repository: SwiftDataRecordingRepository(modelContainer: container),
+            repository: store,
+            identityRepository: store,
             audioFileStore: audioFileStore,
             transcriptionEngine: speechEngine,
             fileTranscriptionEngine: speechEngine,
+            // Models ship in the app bundle; the engine never downloads them.
+            diarizationEngine: FluidAudioDiarizationEngine(
+                modelsDirectory: Bundle.main.url(forResource: "DiarizationModels", withExtension: nil)
+            ),
             startupError: startupError
         )
     }
@@ -91,7 +123,7 @@ final class AppDependencies {
     }
 
     func deleteRecording(_ recording: Recording) async throws {
-        transcriptionJobs.cancel(recording.id)
+        processingJobs.cancel(recording.id)
         try await repository.deleteRecording(id: recording.id)
         try audioFileStore.removeFile(for: recording.audioFile)
     }

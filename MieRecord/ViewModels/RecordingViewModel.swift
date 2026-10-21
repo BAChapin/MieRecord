@@ -69,6 +69,9 @@ final class RecordingViewModel {
         do {
             let recording = try await session.stop()
             phase = .finished(recording)
+            // Post-recording processing starts as soon as the audio is safe on
+            // disk (SPEC FR-3). It runs after capture, never during it.
+            dependencies.processingJobs.identifySpeakers(recording.id)
         } catch {
             phase = .failed(error.localizedDescription)
         }
