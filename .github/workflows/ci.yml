@@ -31,6 +31,9 @@ env:
   # SPM checkouts go here so they can be cached between runs.
   SPM_CACHE_DIR: ${{ github.workspace }}/.spm-cache
   DERIVED_DATA_DIR: ${{ github.workspace }}/.derived-data
+  # SwiftLint release used by the lint job (portable_swiftlint.zip checksum).
+  SWIFTLINT_VERSION: 0.65.1
+  SWIFTLINT_SHA256: c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0
 
 jobs:
   lint:
@@ -41,11 +44,24 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # The macos-26 arm64 image does not ship SwiftLint (only the Intel
+      # image does), so install the pinned portable release and verify it.
+      - name: Install SwiftLint ${{ env.SWIFTLINT_VERSION }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/swiftlint"
+          mkdir -p "$dir"
+          curl -sSL --fail --retry 3 \
+            -o "$dir/portable_swiftlint.zip" \
+            "https://github.com/realm/SwiftLint/releases/download/${SWIFTLINT_VERSION}/portable_swiftlint.zip"
+          echo "${SWIFTLINT_SHA256}  $dir/portable_swiftlint.zip" | shasum -a 256 --check
+          unzip -q -o "$dir/portable_swiftlint.zip" -d "$dir"
+          echo "$dir" >> "$GITHUB_PATH"
+
       - name: SwiftLint version
         run: swiftlint version
 
       # Rules and paths come from .swiftlint.yml at the repository root.
-      # SwiftLint is preinstalled on the macos-26 image.
       - name: SwiftLint
         run: swiftlint lint --strict --reporter github-actions-logging
 
