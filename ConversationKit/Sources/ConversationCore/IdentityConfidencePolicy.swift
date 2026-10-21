@@ -31,36 +31,6 @@ public struct IdentityConfidencePolicy: Hashable, Sendable {
         if confidence >= verificationThreshold { return .needsVerification }
         return .unidentified
     }
-
-    /// A candidate match produced by an identity matcher after calibration.
-    public struct Candidate: Hashable, Sendable {
-        public var profileID: UUID
-        public var calibratedConfidence: Double
-        public var passedQualityChecks: Bool
-
-        public init(profileID: UUID, calibratedConfidence: Double, passedQualityChecks: Bool) {
-            self.profileID = profileID
-            self.calibratedConfidence = calibratedConfidence
-            self.passedQualityChecks = passedQualityChecks
-        }
-    }
-
-    /// Decides the attribution for one cluster. `localSpeakerNumber` is only
-    /// consumed when the result is unidentified; callers obtain it from
-    /// `UnknownSpeakerNumbering`.
-    public func status(for candidate: Candidate?, localSpeakerNumber: @autoclosure () -> Int) -> SpeakerAttributionStatus {
-        guard let candidate, candidate.passedQualityChecks else {
-            return .unidentified(localSpeakerNumber: localSpeakerNumber())
-        }
-        switch tier(forCalibratedConfidence: candidate.calibratedConfidence) {
-        case .recognized:
-            return .recognized(profileID: candidate.profileID, confidence: candidate.calibratedConfidence)
-        case .needsVerification:
-            return .needsVerification(profileID: candidate.profileID, confidence: candidate.calibratedConfidence)
-        case .unidentified:
-            return .unidentified(localSpeakerNumber: localSpeakerNumber())
-        }
-    }
 }
 
 /// Assigns `Speaker 1…N` to unidentified clusters in order of first appearance.
@@ -84,6 +54,24 @@ public enum UnknownSpeakerNumbering {
         var result: [UUID: Int] = [:]
         for (offset, cluster) in unidentified.enumerated() {
             result[cluster.id] = offset + 1
+        }
+        return result
+    }
+
+    /// Same rule over explicit first-appearance times, for callers that derive
+    /// appearance from transcript segments rather than diarization turns.
+    public static func numbers(
+        firstAppearances: [UUID: TimeInterval],
+        identifiedClusterIDs: Set<UUID>
+    ) -> [UUID: Int] {
+        let ordered = firstAppearances
+            .filter { !identifiedClusterIDs.contains($0.key) }
+            .sorted { lhs, rhs in
+                lhs.value != rhs.value ? lhs.value < rhs.value : lhs.key.uuidString < rhs.key.uuidString
+            }
+        var result: [UUID: Int] = [:]
+        for (offset, entry) in ordered.enumerated() {
+            result[entry.key] = offset + 1
         }
         return result
     }

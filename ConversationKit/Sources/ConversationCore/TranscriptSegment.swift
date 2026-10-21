@@ -1,5 +1,21 @@
 import Foundation
 
+/// One recognized word with its position on the recording timeline.
+///
+/// `text` keeps the engine's spacing and attached punctuation (for example
+/// `" test."`), so concatenating a run of words reproduces the original text.
+public struct TimedWord: Hashable, Codable, Sendable {
+    public var text: String
+    public var timeRange: TimeRange
+    public var confidence: Double?
+
+    public init(text: String, timeRange: TimeRange, confidence: Double? = nil) {
+        self.text = text
+        self.timeRange = timeRange
+        self.confidence = confidence
+    }
+}
+
 /// A span of transcribed text on a recording's timeline.
 ///
 /// Segments are produced by the live transcription engine during recording and
@@ -22,6 +38,16 @@ public struct TranscriptSegment: Identifiable, Hashable, Codable, Sendable {
     /// Set when the user edited the text; user edits are authoritative across
     /// reprocessing (SPEC FR-6).
     public var editedAt: Date?
+    /// Word-level timing when the engine provided it. Used to split segments
+    /// at speaker changes. Empty for older or edited transcripts.
+    public var words: [TimedWord]
+    /// True when the user chose this segment's speaker. Reprocessing must not
+    /// silently replace it (SPEC FR-6).
+    public var speakerAssignedByUser: Bool
+    /// True when attribution is ambiguous (overlapping speech, a turn boundary
+    /// inside the segment, or no nearby turn). Shown for review rather than
+    /// forced (SPEC FR-3).
+    public var speakerIsUncertain: Bool
 
     public init(
         id: UUID = UUID(),
@@ -32,7 +58,10 @@ public struct TranscriptSegment: Identifiable, Hashable, Codable, Sendable {
         source: EngineDescriptor,
         speakerClusterID: UUID? = nil,
         transcriptionConfidence: Double? = nil,
-        editedAt: Date? = nil
+        editedAt: Date? = nil,
+        words: [TimedWord] = [],
+        speakerAssignedByUser: Bool = false,
+        speakerIsUncertain: Bool = false
     ) {
         self.id = id
         self.recordingID = recordingID
@@ -43,6 +72,14 @@ public struct TranscriptSegment: Identifiable, Hashable, Codable, Sendable {
         self.speakerClusterID = speakerClusterID
         self.transcriptionConfidence = transcriptionConfidence
         self.editedAt = editedAt
+        self.words = words
+        self.speakerAssignedByUser = speakerAssignedByUser
+        self.speakerIsUncertain = speakerIsUncertain
+    }
+
+    /// Whether the user changed anything that reprocessing would overwrite.
+    public var hasUserEdits: Bool {
+        editedAt != nil || speakerAssignedByUser
     }
 }
 

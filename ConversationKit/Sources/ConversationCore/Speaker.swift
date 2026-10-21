@@ -20,75 +20,97 @@ public struct SpeakerCluster: Identifiable, Hashable, Codable, Sendable {
 /// One contiguous stretch of speech attributed to a cluster.
 public struct SpeakerTurn: Identifiable, Hashable, Codable, Sendable {
     public var id: UUID
+    public var recordingID: UUID
     public var clusterID: UUID
     public var timeRange: TimeRange
     /// True when diarization flagged overlapping speech or low certainty.
     public var isUncertain: Bool
 
-    public init(id: UUID = UUID(), clusterID: UUID, timeRange: TimeRange, isUncertain: Bool = false) {
+    public init(id: UUID = UUID(), recordingID: UUID, clusterID: UUID, timeRange: TimeRange, isUncertain: Bool = false) {
         self.id = id
+        self.recordingID = recordingID
         self.clusterID = clusterID
         self.timeRange = timeRange
         self.isUncertain = isUncertain
     }
 }
 
-// MARK: - Persistent identity (populated by Milestone 3 enrollment)
+/// Recording-local speaker structure produced by diarization.
+public struct SpeakerTimeline: Hashable, Sendable {
+    public var clusters: [SpeakerCluster]
+    public var turns: [SpeakerTurn]
 
-/// An explicitly enrolled voice profile. Profiles are only ever created by a
-/// deliberate user action, never from automatically recognized speakers.
-public struct SpeakerProfile: Identifiable, Hashable, Codable, Sendable {
-    public var id: UUID
-    public var displayName: String
-    public var embeddingEngine: EngineDescriptor
-    public var createdAt: Date
-    public var updatedAt: Date
-
-    public init(
-        id: UUID = UUID(),
-        displayName: String,
-        embeddingEngine: EngineDescriptor,
-        createdAt: Date = Date(),
-        updatedAt: Date = Date()
-    ) {
-        self.id = id
-        self.displayName = displayName
-        self.embeddingEngine = embeddingEngine
-        self.createdAt = createdAt
-        self.updatedAt = updatedAt
+    public init(clusters: [SpeakerCluster], turns: [SpeakerTurn]) {
+        self.clusters = clusters
+        self.turns = turns
     }
-}
 
-/// Identity state of a recording-local cluster (SPEC §7).
-///
-/// `confidence` values are *calibrated* identity confidence in [0, 1]. Raw
-/// embedding similarity must be calibrated before it is stored here; see
-/// `IdentityConfidencePolicy`.
-public enum SpeakerAttributionStatus: Hashable, Codable, Sendable {
-    case unidentified(localSpeakerNumber: Int)
-    case needsVerification(profileID: UUID, confidence: Double)
-    case recognized(profileID: UUID, confidence: Double)
-    /// The user explicitly chose this profile. Not a model prediction.
-    case userConfirmed(profileID: UUID)
+    public static let empty = SpeakerTimeline(clusters: [], turns: [])
 
-    public var profileID: UUID? {
-        switch self {
-        case .unidentified: nil
-        case let .needsVerification(id, _), let .recognized(id, _), let .userConfirmed(id): id
+    /// Sorts turns, drops clusters that own no turns, drops turns that point at
+    /// unknown clusters or have no duration, and recomputes each cluster's first
+    /// appearance from its turns. Keeps engine output from breaking numbering.
+    public func normalized() -> SpeakerTimeline {
+        let known = Set(clusters.map(\.id))
+        let validTurns = turns
+            .filter { known.contains($0.clusterID) && $0.timeRange.duration > 0 }
+            .sorted { $0.timeRange.start < $1.timeRange.start }
+        var firstStart: [UUID: TimeInterval] = [:]
+        for turn in validTurns where firstStart[turn.clusterID] == nil {
+            firstStart[turn.clusterID] = turn.timeRange.start
         }
+        let validClusters = clusters.compactMap { cluster -> SpeakerCluster? in
+            guard let start = firstStart[cluster.id] else { return nil }
+            var updated = cluster
+            updated.firstAppearance = start
+            return updated
+        }
+        .sorted { $0.firstAppearance < $1.firstAppearance }
+        return SpeakerTimeline(clusters: validClusters, turns: validTurns)
     }
 }
 
-/// Links a cluster to its identity decision and the evidence behind it.
-public struct SpeakerAttribution: Hashable, Codable, Sendable {
-    public var clusterID: UUID
-    public var status: SpeakerAttributionStatus
-    /// Whether quality gates (sample length, noise, margin) were satisfied.
-    public var passedQualityChecks: Bool
+/// Display labels for a recording's speakers.
+///
+/// Labels are presentation only and are recomputed from stable cluster IDs
+/// every time; application logic never keys off label strings (SPEC FR-7).
+public enum SpeakerLabels {
+    /// - Parameter identified: display names for clusters resolved to a known
+    ///   profile (empty until identity matching exists). Those clusters do not
+    ///   consume a `Speaker N` number.
+    public static func labels(
+        for clusters: [SpeakerCluster],
+        identified: [UUID: String] = [:]
+    ) -> [UUID: String] {
+        let numbers = UnknownSpeakerNumbering.numbers(for: clusters, identifiedClusterIDs: Set(identified.keys))
+        var labels = identified
+        for (id, number) in numbers {
+            labels[id] = UnknownSpeakerNumbering.label(forLocalSpeakerNumber: number)
+        }
+        return labels
+    }
 
-    public init(clusterID: UUID, status: SpeakerAttributionStatus, passedQualityChecks: Bool) {
-        self.clusterID = clusterID
-        self.status = status
-        self.passedQualityChecks = passedQualityChecks
+    /// Labels for the speakers that actually own transcript text, numbered by
+    /// their first segment. Clusters left without text after corrections do
+    /// not consume a number, so labels stay gap-free (`Speaker 1, 2, …`).
+    public static func labels(
+        forSegments segments: [TranscriptSegment],
+        identified: [UUID: String] = [:]
+    ) -> [UUID: String] {
+        var firstAppearance: [UUID: TimeInterval] = [:]
+        for segment in segments {
+            guard let clusterID = segment.speakerClusterID else { continue }
+            let start = segment.timeRange?.start ?? .greatestFiniteMagnitude
+            firstAppearance[clusterID] = min(firstAppearance[clusterID] ?? .greatestFiniteMagnitude, start)
+        }
+        let numbers = UnknownSpeakerNumbering.numbers(
+            firstAppearances: firstAppearance,
+            identifiedClusterIDs: Set(identified.keys)
+        )
+        var labels = identified.filter { firstAppearance[$0.key] != nil }
+        for (id, number) in numbers {
+            labels[id] = UnknownSpeakerNumbering.label(forLocalSpeakerNumber: number)
+        }
+        return labels
     }
 }

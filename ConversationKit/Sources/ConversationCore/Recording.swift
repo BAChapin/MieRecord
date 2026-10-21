@@ -38,6 +38,9 @@ public struct Recording: Identifiable, Hashable, Codable, Sendable {
     public var processingState: ProcessingState
     /// Engine that produced the live transcript, if any.
     public var liveTranscriptionEngine: EngineDescriptor?
+    /// Engine that produced the stored speaker clusters and turns, if any.
+    /// Used to reuse a completed diarization when processing is retried.
+    public var diarizationEngine: EngineDescriptor?
 
     public init(
         id: UUID = UUID(),
@@ -47,7 +50,8 @@ public struct Recording: Identifiable, Hashable, Codable, Sendable {
         audioFile: AudioFileReference,
         recordingState: RecordingState = .recording,
         processingState: ProcessingState = .notStarted,
-        liveTranscriptionEngine: EngineDescriptor? = nil
+        liveTranscriptionEngine: EngineDescriptor? = nil,
+        diarizationEngine: EngineDescriptor? = nil
     ) {
         self.id = id
         self.title = title
@@ -57,5 +61,6 @@ public struct Recording: Identifiable, Hashable, Codable, Sendable {
         self.recordingState = recordingState
         self.processingState = processingState
         self.liveTranscriptionEngine = liveTranscriptionEngine
+        self.diarizationEngine = diarizationEngine
     }
 }

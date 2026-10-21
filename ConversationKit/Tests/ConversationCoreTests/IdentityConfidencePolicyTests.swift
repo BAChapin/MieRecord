@@ -16,25 +16,6 @@ struct IdentityConfidencePolicyTests {
         #expect(policy.tier(forCalibratedConfidence: 0.80) == .recognized)
         #expect(policy.tier(forCalibratedConfidence: 1.0) == .recognized)
     }
-
-    @Test("a strong match without quality checks stays unidentified (scenario 9)")
-    func qualityGateOverridesScore() {
-        let candidate = IdentityConfidencePolicy.Candidate(profileID: profile, calibratedConfidence: 0.99, passedQualityChecks: false)
-        #expect(policy.status(for: candidate, localSpeakerNumber: 2) == .unidentified(localSpeakerNumber: 2))
-    }
-
-    @Test("no candidate yields Speaker N")
-    func noCandidate() {
-        #expect(policy.status(for: nil, localSpeakerNumber: 1) == .unidentified(localSpeakerNumber: 1))
-    }
-
-    @Test("mid-band match needs verification; high match is recognized")
-    func bands() {
-        let mid = IdentityConfidencePolicy.Candidate(profileID: profile, calibratedConfidence: 0.7, passedQualityChecks: true)
-        #expect(policy.status(for: mid, localSpeakerNumber: 1) == .needsVerification(profileID: profile, confidence: 0.7))
-        let high = IdentityConfidencePolicy.Candidate(profileID: profile, calibratedConfidence: 0.9, passedQualityChecks: true)
-        #expect(policy.status(for: high, localSpeakerNumber: 1) == .recognized(profileID: profile, confidence: 0.9))
-    }
 }
 
 @Suite("Unknown speaker numbering (SPEC FR-4)")
@@ -88,5 +69,40 @@ struct DomainTypeTests {
         let c = TranscriptSegment(recordingID: recording, timeRange: TimeRange(start: 1, end: 2), text: "c", isFinal: true, source: source)
         let d = TranscriptSegment(recordingID: recording, timeRange: nil, text: "d", isFinal: true, source: source)
         #expect([a, b, c, d].sortedByTime().map(\.text) == ["c", "a", "b", "d"])
+    }
+}
+
+@Suite("Speaker labels and timeline normalization")
+struct SpeakerLabelTests {
+    let recording = UUID()
+    let source = EngineDescriptor(identifier: "t")
+
+    @Test("segment-based labels skip speakers without text and identified speakers")
+    func segmentLabels() {
+        let a = UUID(), b = UUID(), known = UUID()
+        let segments = [
+            TranscriptSegment(recordingID: recording, timeRange: TimeRange(start: 0, end: 1), text: "k", isFinal: true, source: source, speakerClusterID: known),
+            TranscriptSegment(recordingID: recording, timeRange: TimeRange(start: 2, end: 3), text: "b", isFinal: true, source: source, speakerClusterID: b),
+            TranscriptSegment(recordingID: recording, timeRange: TimeRange(start: 4, end: 5), text: "a", isFinal: true, source: source, speakerClusterID: a),
+            TranscriptSegment(recordingID: recording, timeRange: TimeRange(start: 6, end: 7), text: "b again", isFinal: true, source: source, speakerClusterID: b),
+            TranscriptSegment(recordingID: recording, timeRange: TimeRange(start: 8, end: 9), text: "none", isFinal: true, source: source),
+        ]
+        let labels = SpeakerLabels.labels(forSegments: segments, identified: [known: "Brett", UUID(): "Absent"])
+        #expect(labels == [known: "Brett", b: "Speaker 1", a: "Speaker 2"])
+    }
+
+    @Test("normalization drops empty clusters and dangling turns and recomputes first appearance")
+    func normalize() {
+        let a = SpeakerCluster(recordingID: recording, firstAppearance: 99)
+        let empty = SpeakerCluster(recordingID: recording, firstAppearance: 0)
+        let timeline = SpeakerTimeline(clusters: [a, empty], turns: [
+            SpeakerTurn(recordingID: recording, clusterID: a.id, timeRange: TimeRange(start: 5, end: 6)),
+            SpeakerTurn(recordingID: recording, clusterID: a.id, timeRange: TimeRange(start: 2, end: 3)),
+            SpeakerTurn(recordingID: recording, clusterID: UUID(), timeRange: TimeRange(start: 1, end: 2)),
+            SpeakerTurn(recordingID: recording, clusterID: a.id, timeRange: TimeRange(start: 4, end: 4)),
+        ]).normalized()
+        #expect(timeline.clusters.map(\.id) == [a.id])
+        #expect(timeline.clusters[0].firstAppearance == 2)
+        #expect(timeline.turns.map(\.timeRange.start) == [2, 5])
     }
 }

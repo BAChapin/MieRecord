@@ -24,6 +24,38 @@ public protocol RecordingRepository: Sendable {
     func saveSegments(_ segments: [TranscriptSegment]) async throws
     /// Replaces every segment of the recording with `segments`.
     func replaceSegments(_ segments: [TranscriptSegment], forRecording recordingID: UUID) async throws
+
+    /// Speaker clusters and turns stored for the recording (empty before
+    /// diarization).
+    func speakerTimeline(forRecording recordingID: UUID) async throws -> SpeakerTimeline
+    /// Replaces the recording's clusters and turns in one save.
+    func replaceSpeakerTimeline(_ timeline: SpeakerTimeline, forRecording recordingID: UUID) async throws
+}
+
+/// Persistence for speaker identity: per-recording voice data and attributions,
+/// and the persistent profile library.
+///
+/// Voice data belongs to a recording and is deleted with it. Profiles and
+/// their samples are independent of recordings and are only created, changed,
+/// or deleted by explicit user actions.
+public protocol SpeakerIdentityRepository: Sendable {
+    func voiceData(forRecording recordingID: UUID) async throws -> RecordingVoiceData?
+    func replaceVoiceData(_ data: RecordingVoiceData?, forRecording recordingID: UUID) async throws
+
+    func speakerAttributions(forRecording recordingID: UUID) async throws -> [SpeakerAttribution]
+    /// Replaces all attributions for the recording in one save.
+    func replaceSpeakerAttributions(_ attributions: [SpeakerAttribution], forRecording recordingID: UUID) async throws
+
+    func speakerProfiles() async throws -> [SpeakerProfile]
+    func saveSpeakerProfile(_ profile: SpeakerProfile) async throws
+    /// Deletes the profile, its samples, and its feedback records.
+    func deleteSpeakerProfile(id: UUID) async throws
+    func voiceSamples(forProfile profileID: UUID?) async throws -> [VoiceSample]
+    func saveVoiceSample(_ sample: VoiceSample) async throws
+    func deleteVoiceSample(id: UUID) async throws
+
+    func saveIdentityFeedback(_ feedback: IdentityFeedback) async throws
+    func identityFeedback() async throws -> [IdentityFeedback]
 }
 
 /// Resolves `AudioFileReference`s to concrete URLs inside an app-managed
