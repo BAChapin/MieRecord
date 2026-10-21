@@ -1,0 +1,199 @@
+# Release pipeline for MieRecord.
+#
+# Runs when a tag matching `v*` is pushed (see CLAUDE.md, "CI Practices"):
+#   verify-ci - the tagged commit must be on `main` and have a successful
+#               CI (ci.yml) run; otherwise the pipeline stops here.
+#   tests     - UI tests (and integration tests, once a target exists) on the
+#               iOS Simulator.
+#   release   - unsigned Release archive, zipped and attached to a new GitHub
+#               Release. No upload to App Store Connect.
+#
+# No signing certificates, provisioning profiles, or secrets are used. The
+# archive is built with code signing disabled, so the attached .xcarchive is a
+# verified build artifact but not an installable IPA.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  SIMULATOR_DESTINATION: platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5
+  SPM_CACHE_DIR: ${{ github.workspace }}/.spm-cache
+  DERIVED_DATA_DIR: ${{ github.workspace }}/.derived-data
+
+jobs:
+  verify-ci:
+    name: Verify CI passed on the tagged commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the commit the tag points to
+        id: resolve
+        run: |
+          # Annotated tags point at a tag object; peel to the commit.
+          sha="$(git rev-parse "${GITHUB_REF_NAME}^{commit}")"
+          echo "Tag ${GITHUB_REF_NAME} -> ${sha}"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Require the commit to be on main
+        env:
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::Commit $SHA is not on main. Tags are only released from main."
+            exit 1
+          fi
+
+      - name: Require a successful ci.yml run for the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          runs="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select(.event == "push" and .head_branch == "main")] | length')"
+          echo "Successful CI runs for $SHA on main: $runs"
+          if [ "$runs" -lt 1 ]; then
+            echo "::error::No successful CI run found for $SHA. Wait for CI on main to pass, then re-tag."
+            exit 1
+          fi
+
+  tests:
+    name: UI and integration tests (iOS Simulator)
+    needs: verify-ci
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache Swift package checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SPM_CACHE_DIR }}
+          key: spm-${{ runner.os }}-xcode26.6-${{ hashFiles('ConversationKit/Package.resolved', 'MieRecord.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode26.6-
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Run UI tests (MieRecordUITests)
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project MieRecord.xcodeproj \
+            -scheme MieRecord \
+            -destination "$SIMULATOR_DESTINATION" \
+            -only-testing:MieRecordUITests \
+            -derivedDataPath "$DERIVED_DATA_DIR" \
+            -clonedSourcePackagesDirPath "$SPM_CACHE_DIR" \
+            -resultBundlePath "$RUNNER_TEMP/ui-tests.xcresult" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+
+      # TODO(ci): there is no dedicated integration test target yet. The
+      # integration-style tests (recording session, pipeline, re-transcription)
+      # live in the ConversationKit package test targets and already run in
+      # ci.yml for this commit. When an integration target is added (for
+      # example `MieRecordIntegrationTests`), run it here with a second
+      # `xcodebuild test ... -only-testing:<target>` step.
+      - name: Integration tests
+        run: echo "No dedicated integration test target yet; see TODO above."
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-test-results
+          path: ${{ runner.temp }}/ui-tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 30
+
+  release:
+    name: Create GitHub Release
+    needs: [verify-ci, tests]
+    runs-on: macos-26
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache Swift package checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SPM_CACHE_DIR }}
+          key: spm-${{ runner.os }}-xcode26.6-${{ hashFiles('ConversationKit/Package.resolved', 'MieRecord.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode26.6-
+
+      # Unsigned Release archive. This is the "verified artifact" the release
+      # stops at (CLAUDE.md, "Deployment"). Signing and App Store Connect
+      # upload are intentionally out of scope.
+      - name: Build unsigned Release archive
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project MieRecord.xcodeproj \
+            -scheme MieRecord \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/MieRecord.xcarchive" \
+            -derivedDataPath "$DERIVED_DATA_DIR" \
+            -clonedSourcePackagesDirPath "$SPM_CACHE_DIR" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | xcbeautify --renderer github-actions
+
+      - name: Package archive
+        run: |
+          cd "$RUNNER_TEMP"
+          ditto -c -k --keepParent MieRecord.xcarchive "MieRecord-${GITHUB_REF_NAME}-unsigned.xcarchive.zip"
+          shasum -a 256 "MieRecord-${GITHUB_REF_NAME}-unsigned.xcarchive.zip" | tee "MieRecord-${GITHUB_REF_NAME}-unsigned.xcarchive.zip.sha256"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.verify-ci.outputs.sha }}
+        run: |
+          prerelease_flag=""
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease_flag="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "MieRecord $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            $prerelease_flag \
+            "$RUNNER_TEMP/MieRecord-${GITHUB_REF_NAME}-unsigned.xcarchive.zip" \
+            "$RUNNER_TEMP/MieRecord-${GITHUB_REF_NAME}-unsigned.xcarchive.zip.sha256"

@@ -14,6 +14,10 @@ Offline-first iOS conversation recorder. `SPEC.md` is the product source of trut
 ## Build and test
 
 ```bash
+swiftlint lint --strict
+```
+
+```bash
 cd ConversationKit && swift test
 ```
 

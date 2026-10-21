@@ -245,6 +245,12 @@ interruption, failure)           → TranscriptionEvent (volatile | finalized)
 
 - [ ] Public export API; MCP strategy (macOS companion or user-initiated export). No always-on iPhone server.
 
+## Continuous integration (2026-10-21)
+
+- `.github/workflows/ci.yml` on every push to `main`: SwiftLint (`--strict`, rules in `.swiftlint.yml`), simulator build of the `MieRecord` scheme, and the ConversationKit package tests on the iPhone 17 Pro / iOS 26.5 simulator. Runner `macos-26` pinned to Xcode 26.6; SPM checkouts cached; no signing or secrets.
+- `.github/workflows/release.yml` on `v*` tags: refuses unless the tagged commit is on `main` with a successful CI run, runs `MieRecordUITests` on the simulator, then builds an unsigned Release `.xcarchive` and attaches it (zipped, with SHA-256) to a GitHub Release. No App Store Connect upload.
+- Known gaps: no dedicated integration test target yet (placeholder step in the release workflow); the UI test has not been seen to run end to end on this Mac (runner connection failure noted above), so its first real run is on CI. The project is developed with Xcode 27.1 but CI builds with Xcode 26.6; nothing in the sources requires iOS 27 APIs.
+
 ## Next development steps
 
 1. Hands-on iPhone run of Milestone 3: enroll yourself from one recording, make a new recording, confirm the verify flow, reject a wrong suggestion, delete and re-add a person.

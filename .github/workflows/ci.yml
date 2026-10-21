@@ -1,0 +1,133 @@
+# Continuous integration for MieRecord.
+#
+# Runs on every push to `main` (see CLAUDE.md, "CI Practices"):
+#   lint       - SwiftLint over the app and package sources
+#   build      - app scheme for the iOS Simulator
+#   unit-tests - ConversationKit package tests on the iOS Simulator
+#
+# No signing certificates, provisioning profiles, or secrets are used.
+# Builds run with code signing disabled, which is enough for the simulator.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # macos-26 ships Xcode 26.0.1 ... 26.6. Pin one so toolchain upgrades on the
+  # runner image are a deliberate change here, not a surprise.
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+  # iPhone 17 Pro / iOS 26.5 is installed on the macos-26 image.
+  SIMULATOR_DESTINATION: platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5
+  # SPM checkouts go here so they can be cached between runs.
+  SPM_CACHE_DIR: ${{ github.workspace }}/.spm-cache
+  DERIVED_DATA_DIR: ${{ github.workspace }}/.derived-data
+
+jobs:
+  lint:
+    name: Lint (SwiftLint)
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: SwiftLint version
+        run: swiftlint version
+
+      # Rules and paths come from .swiftlint.yml at the repository root.
+      # SwiftLint is preinstalled on the macos-26 image.
+      - name: SwiftLint
+        run: swiftlint lint --strict --reporter github-actions-logging
+
+  build:
+    name: Build (iOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache Swift package checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SPM_CACHE_DIR }}
+          key: spm-${{ runner.os }}-xcode26.6-${{ hashFiles('ConversationKit/Package.resolved', 'MieRecord.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode26.6-
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Build app for the simulator
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project MieRecord.xcodeproj \
+            -scheme MieRecord \
+            -configuration Debug \
+            -destination "$SIMULATOR_DESTINATION" \
+            -derivedDataPath "$DERIVED_DATA_DIR" \
+            -clonedSourcePackagesDirPath "$SPM_CACHE_DIR" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            | xcbeautify --renderer github-actions
+
+  unit-tests:
+    name: Unit tests (iOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Cache Swift package checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.SPM_CACHE_DIR }}
+          key: spm-${{ runner.os }}-xcode26.6-${{ hashFiles('ConversationKit/Package.resolved', 'MieRecord.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode26.6-
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # The ConversationKit package has no checked-in Xcode project; Xcode
+      # generates a "ConversationKit-Package" scheme that covers every target
+      # and test target in Package.swift.
+      - name: Run ConversationKit tests on the simulator
+        working-directory: ConversationKit
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme ConversationKit-Package \
+            -destination "$SIMULATOR_DESTINATION" \
+            -derivedDataPath "$DERIVED_DATA_DIR" \
+            -clonedSourcePackagesDirPath "$SPM_CACHE_DIR" \
+            -resultBundlePath "$RUNNER_TEMP/unit-tests.xcresult" \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            | xcbeautify --renderer github-actions
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: unit-test-results
+          path: ${{ runner.temp }}/unit-tests.xcresult
+          if-no-files-found: ignore
+          retention-days: 14
