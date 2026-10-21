@@ -47,7 +47,7 @@ public struct LiveTranscriptAssembler: Sendable {
             transcript.volatileRange = range
             return nil
 
-        case let .finalized(text, range, confidence):
+        case let .finalized(text, range, confidence, words):
             transcript.volatileText = ""
             transcript.volatileRange = nil
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,7 +58,8 @@ public struct LiveTranscriptAssembler: Sendable {
                 text: trimmed,
                 isFinal: true,
                 source: source,
-                transcriptionConfidence: confidence
+                transcriptionConfidence: confidence,
+                words: words
             )
             transcript.finalizedSegments.append(segment)
             return segment

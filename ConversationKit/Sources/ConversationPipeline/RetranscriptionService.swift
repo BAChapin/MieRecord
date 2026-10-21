@@ -17,7 +17,7 @@ public enum RetranscriptionError: Error, Equatable, Sendable, LocalizedError {
         case .recordingInProgress: "This recording is still being captured."
         case .alreadyRunning: "This recording is already being transcribed."
         case .audioFileMissing: "The audio file for this recording is missing."
-        case let .wouldDiscardUserEdits(count): "Re-transcribing would discard \(count) edited transcript segment(s)."
+        case let .wouldDiscardUserEdits(count): "Re-transcribing would discard your corrections to \(count) transcript segment(s)."
         case .noSpeechDetected: "No speech was detected. The previous transcript was kept."
         case let .engineUnavailable(reason): "Transcription is unavailable: \(reason)"
         }
@@ -72,7 +72,8 @@ public actor RetranscriptionService {
         guard recording.recordingState != .recording else { throw RetranscriptionError.recordingInProgress }
 
         let existing = try await repository.segments(forRecording: recordingID)
-        let editedCount = existing.filter { $0.editedAt != nil }.count
+        // Text edits and manual speaker choices are both lost on replacement.
+        let editedCount = existing.filter(\.hasUserEdits).count
         if editedCount > 0, !discardingUserEdits {
             throw RetranscriptionError.wouldDiscardUserEdits(count: editedCount)
         }
@@ -112,7 +113,8 @@ public actor RetranscriptionService {
                     text: text,
                     isFinal: true,
                     source: source,
-                    transcriptionConfidence: span.confidence
+                    transcriptionConfidence: span.confidence,
+                    words: span.words
                 )
             }
             if segments.isEmpty, !existing.isEmpty {

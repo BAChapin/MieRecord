@@ -5,9 +5,15 @@ import ConversationML
 import Foundation
 
 /// In-memory repository used to observe what the session persists.
-actor InMemoryRepository: RecordingRepository {
+actor InMemoryRepository: RecordingRepository, SpeakerIdentityRepository {
     var recordings: [UUID: Recording] = [:]
     var segmentsByRecording: [UUID: [TranscriptSegment]] = [:]
+    var timelines: [UUID: SpeakerTimeline] = [:]
+    var voice: [UUID: RecordingVoiceData] = [:]
+    var attributions: [UUID: [SpeakerAttribution]] = [:]
+    var profiles: [UUID: SpeakerProfile] = [:]
+    var samples: [UUID: VoiceSample] = [:]
+    var feedback: [IdentityFeedback] = []
     var saveCount = 0
 
     func allRecordings() async throws -> [Recording] { Array(recordings.values) }
@@ -27,7 +33,30 @@ actor InMemoryRepository: RecordingRepository {
     func deleteRecording(id: UUID) async throws {
         recordings[id] = nil
         segmentsByRecording[id] = nil
+        timelines[id] = nil
+        voice[id] = nil
+        attributions[id] = nil
     }
+
+    // SpeakerIdentityRepository
+    func voiceData(forRecording recordingID: UUID) async throws -> RecordingVoiceData? { voice[recordingID] }
+    func replaceVoiceData(_ data: RecordingVoiceData?, forRecording recordingID: UUID) async throws { voice[recordingID] = data }
+    func speakerAttributions(forRecording recordingID: UUID) async throws -> [SpeakerAttribution] { attributions[recordingID] ?? [] }
+    func replaceSpeakerAttributions(_ list: [SpeakerAttribution], forRecording recordingID: UUID) async throws { attributions[recordingID] = list }
+    func speakerProfiles() async throws -> [SpeakerProfile] { profiles.values.sorted { $0.displayName < $1.displayName } }
+    func saveSpeakerProfile(_ profile: SpeakerProfile) async throws { profiles[profile.id] = profile }
+    func deleteSpeakerProfile(id: UUID) async throws {
+        profiles[id] = nil
+        samples = samples.filter { $0.value.profileID != id }
+        feedback.removeAll { $0.profileID == id }
+    }
+    func voiceSamples(forProfile profileID: UUID?) async throws -> [VoiceSample] {
+        samples.values.filter { profileID == nil || $0.profileID == profileID }.sorted { $0.createdAt < $1.createdAt }
+    }
+    func saveVoiceSample(_ sample: VoiceSample) async throws { samples[sample.id] = sample }
+    func deleteVoiceSample(id: UUID) async throws { samples[id] = nil }
+    func saveIdentityFeedback(_ item: IdentityFeedback) async throws { feedback.append(item) }
+    func identityFeedback() async throws -> [IdentityFeedback] { feedback }
     func segments(forRecording recordingID: UUID) async throws -> [TranscriptSegment] {
         segmentsByRecording[recordingID] ?? []
     }
@@ -45,7 +74,76 @@ actor InMemoryRepository: RecordingRepository {
     func replaceSegments(_ segments: [TranscriptSegment], forRecording recordingID: UUID) async throws {
         segmentsByRecording[recordingID] = segments
     }
+    func speakerTimeline(forRecording recordingID: UUID) async throws -> SpeakerTimeline {
+        timelines[recordingID] ?? .empty
+    }
+    func replaceSpeakerTimeline(_ timeline: SpeakerTimeline, forRecording recordingID: UUID) async throws {
+        timelines[recordingID] = timeline
+    }
 }
+
+/// Scripted diarizer. Clusters are keyed by a small integer so tests can
+/// describe turns compactly: `[(0, 0, 5), (1, 5, 9)]`.
+final class FakeDiarizer: SpeakerDiarizationEngine, @unchecked Sendable {
+    enum Behavior: Sendable {
+        case turns([(speaker: Int, start: Double, end: Double)])
+        /// Turns plus a voice vector per engine speaker index; one window is
+        /// emitted per turn with that vector.
+        case voices([(speaker: Int, start: Double, end: Double)], vectors: [Int: [Float]])
+        case fail
+        case unsupported
+    }
+
+    let descriptor: EngineDescriptor
+    let behavior: Behavior
+    private let lock = NSLock()
+    private var _calls = 0
+    var calls: Int { lock.withLock { _calls } }
+
+    init(_ behavior: Behavior, version: String = "1") {
+        self.behavior = behavior
+        self.descriptor = EngineDescriptor(identifier: "test.diarizer", version: version)
+    }
+
+    func availability() async -> EngineAvailability {
+        if case .unsupported = behavior { return .unsupported(reason: "fake diarizer unsupported") }
+        return .available
+    }
+
+    func prepare() async throws {}
+
+    func diarize(audioURL: URL, recordingID: UUID, progress: @escaping @Sendable (Double) -> Void) async throws -> DiarizationOutput {
+        lock.withLock { _calls += 1 }
+        let spec: [(speaker: Int, start: Double, end: Double)]
+        var vectors: [Int: [Float]] = [:]
+        switch behavior {
+        case .fail:
+            throw DiarizationError.engineFailure("fake diarizer failed")
+        case .unsupported:
+            return DiarizationOutput(timeline: .empty)
+        case let .turns(turns):
+            spec = turns
+        case let .voices(turns, voiceVectors):
+            spec = turns
+            vectors = voiceVectors
+        }
+        var ids: [Int: UUID] = [:]
+        for entry in spec where ids[entry.speaker] == nil { ids[entry.speaker] = UUID() }
+        progress(1)
+        let timeline = SpeakerTimeline(
+            // Engine-chosen recording IDs are deliberately wrong; the
+            // coordinator must re-own them.
+            clusters: ids.values.map { SpeakerCluster(id: $0, recordingID: UUID(), firstAppearance: 0) },
+            turns: spec.map { SpeakerTurn(recordingID: UUID(), clusterID: ids[$0.speaker]!, timeRange: TimeRange(start: $0.start, end: $0.end)) }
+        )
+        let windows = spec.compactMap { entry -> WindowEmbedding? in
+            vectors[entry.speaker].map { WindowEmbedding(clusterID: ids[entry.speaker]!, timeRange: TimeRange(start: entry.start, end: entry.end), vector: $0) }
+        }
+        return DiarizationOutput(timeline: timeline, voiceData: windows.isEmpty ? nil : RecordingVoiceData(engine: descriptor, windows: windows))
+    }
+}
+
+extension FakeDiarizer.Behavior: @unchecked Sendable {}
 
 struct TemporaryAudioFileStore: AudioFileStore {
     let directory: URL
