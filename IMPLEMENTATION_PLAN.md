@@ -2,7 +2,7 @@
 
 Tracks progress against `SPEC.md`. Updated as milestones land.
 
-**Status:** Milestone 1 implemented; simulator-verified, hardware verification pending.
+**Status:** Milestones 1–2 hardware-verified by the user. Milestone 3 (persistent identity) implemented and verified on the Mac with the real models; iPhone hands-on run pending.
 **Last updated:** 2026-10-21
 
 ## Architecture summary
@@ -13,11 +13,12 @@ SwiftUI; the app target is the only place that does.
 
 | Module | Role | Key types |
 |---|---|---|
-| `ConversationCore` | Domain entities, processing states, speaker policy, repository protocols | `Recording`, `TranscriptSegment`, `TimeRange`, `ProcessingState`, `SpeakerCluster`/`SpeakerTurn`/`SpeakerProfile`/`SpeakerAttributionStatus`, `IdentityConfidencePolicy`, `UnknownSpeakerNumbering`, `RecordingRepository`, `AudioFileStore` |
+| `ConversationCore` | Domain entities, processing states, speaker policy, identity matching and calibration, repository protocols | `Recording`, `TranscriptSegment`, `TimeRange`, `ProcessingState`, `SpeakerCluster`/`SpeakerTurn`/`SpeakerProfile`/`SpeakerAttributionStatus`, `IdentityConfidencePolicy`, `UnknownSpeakerNumbering`, `RecordingRepository`, `AudioFileStore` |
 | `ConversationAudio` | Capture, durable file writing, interruptions | `AudioCaptureSource` (protocol), `AudioCaptureSession` (actor, AVAudioEngine), `CaptureFileWriter`, `AudioChunk`, `MicrophonePermission`, `AudioSessionController` |
 | `ConversationML` | Engine protocols and implementations | `StreamingTranscriptionEngine`, `AppleSpeechTranscriptionEngine` (SpeechAnalyzer/SpeechTranscriber), `SpeakerDiarizationEngine`, `SpeakerEmbeddingEngine`, `SpeakerIdentityMatcher` (interfaces only) |
-| `ConversationPipeline` | Orchestration | `RecordingSession` (actor), `LiveTranscriptAssembler`, `RecordingRecovery` |
-| `ConversationStorage` | Persistence | `SwiftDataRecordingRepository` (`@ModelActor`), `DirectoryAudioFileStore`, SwiftData models |
+| `ConversationPipeline` | Orchestration | `RecordingSession`, `LiveTranscriptAssembler`, `RecordingRecovery`, `RetranscriptionService`, `PostProcessingCoordinator`, `TranscriptSpeakerAligner`, `SpeakerEditor`, `IdentityService` |
+| `ConversationStorage` | Persistence | `SwiftDataRecordingRepository` (`@ModelActor`), `DirectoryAudioFileStore`, SwiftData models incl. speaker clusters and turns |
+| `ConversationDiarization` | FluidAudio adapter | `FluidAudioDiarizationEngine` (only module that imports FluidAudio) |
 | `MieRecord` (app) | SwiftUI | `AppDependencies` (composition root), `RecordingListView`, `RecordingView`, `RecordingDetailView`, view models, `AudioPlaybackController` |
 
 The SPEC's seven logical modules map as: Core → `ConversationCore`; Audio →
@@ -150,21 +151,87 @@ interruption, failure)           → TranscriptionEvent (volatile | finalized)
 
 ## Milestone 2 — Offline diarization and alignment
 
-- [ ] Evaluate on-device diarization candidates (sherpa-onnx speaker segmentation + embedding models; Core ML conversions). Verify iOS build, license, model size, memory, timestamped turn output before adopting anything.
-- [ ] Run the existing file transcription pass automatically when live transcription was unavailable or left gaps (the engine and service exist; only the trigger is missing)
-- [ ] `PostProcessingCoordinator` with resumable stages driving `ProcessingState`
-- [ ] `SpeakerDiarizationEngine` implementation → `SpeakerCluster`/`SpeakerTurn` persistence
-- [ ] Transcript-to-turn alignment; `Speaker N` labeling via `UnknownSpeakerNumbering`
-- [ ] UI for speaker assignment, merge/split groundwork
-- [ ] Processing status UI (queued/processing/needs review/ready/failed), cancel/retry
+### Completed (2026-10-21)
+
+- [x] Engine evaluation: Apple's iOS 27.1 SDK has no diarization API. Candidates compared: FluidAudio, sherpa-onnx, Argmax SpeakerKit OSS. **FluidAudio 0.17.7 selected** (native Swift, Core ML, file-URL entry point that resamples internally, 256-d speaker embeddings for Milestone 3).
+- [x] FluidAudio source audited at v0.17.7: only network code is the Hugging Face model downloader; no telemetry. `ModelHub.offlineMode = true` turns missing models into errors instead of downloads.
+- [x] Models (21 MB, HF `FluidInference/speaker-diarization-coreml` at `df2625ac`) bundled in `Models/DiarizationModels` with `SHA256SUMS`, `MODEL_NOTICE.md`, `MODEL_CARD.md`, and a provenance README; copied into the app as a folder reference.
+- [x] `ConversationDiarization` adapter target; FluidAudio pinned `exact: "0.17.7"` with `traits: []` so the NemoTextProcessing binary is not linked (verified in the built app).
+- [x] Word-level timing captured from `SpeechTranscriber` runs (live and file passes) and persisted.
+- [x] `TranscriptSpeakerAligner`: per-word attribution with splitting at speaker changes; segment-level fallback; overlap, mixed-segment, and far-from-turn ambiguity flagged rather than forced.
+- [x] `PostProcessingCoordinator`: transcript repair only when missing/provisional/untimed (never over user text edits), diarization checkpoint reused on retry for the same engine version, alignment, `.ready` / `.needsReview` / `.failed(stage)` states; runs automatically after every recording stops.
+- [x] `SpeakerEditor`: move a line to another or a new speaker, confirm an uncertain line, merge two speakers. Corrections are marked user-chosen and block silent reprocessing.
+- [x] `Speaker N` labels computed from segments (first appearance, gap-free after edits, identified speakers skip numbers).
+- [x] UI: colored speaker labels with correction menus, needs-review prompt, per-stage progress and cancel, Identify Speakers (Again), list badges, Acknowledgements screen (CC-BY-4.0 attribution with all three model-card citations, FluidAudio Apache-2.0 text).
+- [x] SwiftData schema migration (new optional/defaulted fields and two new models) verified on a copy of the phone's store and on the phone itself.
+
+### Technical decisions
+
+12. **FluidAudio behind `SpeakerDiarizationEngine`.** Only `ConversationDiarization` imports it; the protocol takes a file URL and returns a `SpeakerTimeline`, so sherpa-onnx or SpeakerKit could replace it without touching other modules.
+13. **Models bundled, never downloaded.** Fully offline from first launch (SPEC §13 scenario 12) at the cost of 21 MB app size and 21 MB in git. The `.fluidaudio-revision` marker and `speaker-diarization/` folder name are required by FluidAudio.
+14. **Engine speaker IDs are discarded.** "S1"/"S2" map to fresh cluster UUIDs per run; labels are always derived from stable IDs.
+15. **Ambiguity thresholds (provisional).** Word overlap ratio 0.5; segment runner-up ≥ 0.3 share or ≥ 0.5 s; snap distance ≤ 0.5 s confident, ≤ 1.0 s flagged; beyond that, unattributed. Tune with real recordings.
+16. **Non-Sendable `OfflineDiarizerManager`** is created per run as a local inside the adapter actor; only the `Sendable` loaded models are cached.
+
+### Testing status (Milestone 2)
+
+| Check | Result |
+|---|---|
+| `swift test`: Core 10, ML 4, Pipeline 36, Storage 7, Diarization 3 | 60/60 pass |
+| Real bundled models on a 34 s three-voice synthetic meeting (fixture in tests) | 3 speakers, every line correctly attributed |
+| Full stack on the Mac (Apple file transcription + FluidAudio + alignment + SwiftData) | 12/12 lines correct, `Speaker 1–3` by first appearance, about 2 s |
+| Real one-speaker recordings from the iPhone | 1 speaker found |
+| iPhone build, install, launch, store migration | pass |
+| Diarization speed, memory, accuracy on iPhone; real multi-person conversations | **unverified** |
+
+### Known limitations
+
+- Two similar synthetic female voices (Samantha, Karen) were merged into one speaker; forcing three speakers still misassigned one line. Real voices are expected to separate better, but accuracy on real conversations is unmeasured. Users can fix merges with "Move this line to → New Speaker".
+- FluidAudio's per-segment `embedding` is the cluster centroid copied onto every turn, not a per-turn vector. Milestone 3 must use `embedSpans` for per-turn quality checks.
+- No published iPhone memory figures; 30–60 minute recordings still need benchmarking (SPEC §9).
+- Splitting an incorrectly merged speaker is per line only; a bulk split tool is not built.
+- Corrections cannot be undone except by "Identify Speakers Again" (which discards all corrections).
 
 ## Milestone 3 — Persistent identity
 
-- [ ] `SpeakerEmbeddingEngine` implementation and profile storage (SwiftData + managed embedding files)
-- [ ] Explicit enrollment flow from vetted segments; no automatic enrollment
-- [ ] `SpeakerIdentityMatcher` with quality gates and margin checks; calibration experiment harness and evaluation set before surfacing percentages
-- [ ] Wire `IdentityConfidencePolicy`; verification indicator and confirm/override UI
-- [ ] Profile deletion policy and its effect on historical labels
+### Completed (2026-10-21)
+
+- [x] Embedding source verified in FluidAudio 0.17.7 source: there is no per-span embedding API (the research summary's `embedSpans` does not exist), and the standalone CAM++ embedder is beta and uses separate, unreviewed models. Identity therefore uses the diarizer's own per-window 256-d embeddings (`exposeChunkEmbeddings`), keeping clustering and matching in one embedding space.
+- [x] Score measurements on 2026-10-21 (raw cosine of window-centroid voiceprints): same real person across two sessions 0.80; different clean speakers −0.15 to 0.42; cluster consistency 0.94–0.96 for pure clusters versus 0.76–0.82 for clusters mixing voices. A mixed cluster scored 0.81 against one of its members, which the consistency gate blocks.
+- [x] Core: `VectorMath`, `WindowEmbedding`, `ClusterVoiceprint` (consistency, clean speech), `SpeakerProfile`, `VoiceSample` with provenance, `ProfileVoiceprint`, `SpeakerAttributionStatus` (unidentified, needsVerification, recognized, userConfirmed, userKeptUnidentified), `IdentityEvidence`, `IdentityFeedback`.
+- [x] `IdentityMatchingPolicy` + `IdentityMatcher`: quality gates (≥ 4 s clean speech, consistency ≥ 0.88), margin ≥ 0.15 to the next person, one person per recording (strongest claim wins; a fallback match is never top tier), rejected people never re-suggested, user decisions never overwritten. Provisional tiers on raw similarity (≥ 0.70 verify, ≥ 0.85 recognized) until calibrated; calibrated mode applies the SPEC 60/80 tiers.
+- [x] `IdentityCalibration` / `CalibrationFitting`: Platt scaling (Newton, label smoothing), expected calibration error, k-fold held-out ECE. Validated only with ≥ 30 examples per class and ECE ≤ 0.05. Not enabled in the app.
+- [x] `IdentityService`: matching, cheap re-matching of all recordings from stored voiceprints, explicit enrollment (consent, ≥ 5 s of approved lines, selection consistency check), adding samples to a person, confirm/reject/assign/keep-unidentified/clear, rename, delete sample, delete person (reverts history), delete all. Feedback logged locally on confirm/reject/manual assignment, excluding self-comparisons.
+- [x] Recordings diarized before voice data existed (Milestone 2) are diarized again on their next processing run instead of reusing the checkpoint, so they can be matched and enrolled.
+- [x] Pipeline: voice data stored after diarization; identity matching stage; identity decisions survive reused diarization and block a fresh one without consent; merges move voice windows and carry user decisions.
+- [x] Storage: voice data and attributions cascade with recordings; profiles, samples, and feedback are independent; profile deletion cascades to samples and feedback.
+- [x] UI: names on speaker labels, verify badge with "Yes, this is …" / "Not …", "This is…", "Save Voice as New Person…", "Add This Voice to …", "Remove Name", "Not Anyone Saved"; enrollment sheet with line selection, playback, minimum speech, consent toggle, voiceprint explanation; People screen with samples, rename, delete person, delete all, and an explanation of provisional matching with calibration progress.
+
+### Technical decisions
+
+17. **Diarizer embeddings for identity.** Window embeddings are masked per speaker within each 10 s analysis chunk, so they are speaker-specific. Profiles are centroids of approved samples; matching compares centroids by cosine.
+18. **No percentages before calibration** (SPEC FR-5). Evidence stores raw similarity and margin; calibrated confidence is nil while provisional. The UI shows names, a verify badge, or `Speaker N`, never a number.
+19. **Rematch on library change.** Enrolling, adding or deleting samples, and deleting people re-match every recording from stored voiceprints (no audio work). Recognition never changes profiles.
+20. **Deleting a person reverts history.** Every recording that named them shows a numbered speaker again, including user-confirmed ones; their samples and calibration feedback are deleted.
+21. **Merging into a confirmed person.** Assigning a person who is already confirmed for another speaker in the same recording merges the two speakers.
+
+### Testing status (Milestone 3)
+
+| Check | Result |
+|---|---|
+| `swift test`: Core 20, ML 4, Pipeline 45, Storage 8, Diarization 4 | 81/81 pass |
+| Real stack on the Mac: enroll Samantha and Daniel from one synthetic meeting, process another meeting with different lines | both recognized (raw 0.94, margins 0.74 and 0.77); unenrolled Fred stays `Speaker 1`; 2 profiles, 2 samples, no automatic enrollment |
+| iPhone build | pass |
+| iPhone install, launch, and store migration (3 recordings, 11 segments intact; identity tables present) | pass |
+| Hands-on enrollment and recognition on the iPhone | **pending** |
+
+### Known limitations
+
+- Provisional thresholds rest on one real same-person measurement. Expect real voices across rooms and microphones to score lower than synthetic voices; tune after collecting confirmations.
+- Calibration is implemented but never enabled automatically; enabling it needs a deliberate decision and a representative evaluation set (SPEC §9).
+- A speaker created by hand ("New Speaker") has no voiceprint and cannot be enrolled.
+- Enrollment selection is by line; window embeddings are about 10 s, so a short approved line can include neighboring audio from the same speaker's window.
+- Identity evidence on user-confirmed speakers keeps the pre-decision scores (not shown in the UI).
 
 ## Milestone 4 — Quality, exports, hardening
 
@@ -180,7 +247,7 @@ interruption, failure)           → TranscriptionEvent (volatile | finalized)
 
 ## Next development steps
 
-1. Rerun `MieRecordUITests` from Xcode (Product ▸ Test) after restarting the Simulator; it covers record → stop → open → playable.
-2. Hands-on hardware run: record ~10 minutes on the iPhone, trigger an incoming call, background the app, confirm playback and transcript persistence. Record results in the verification log.
-3. If `SpeechTranscriber` assets need downloading on first use, add a visible progress UI around `prepare()`.
-4. Begin Milestone 2 with the file-based transcription pass, since it also closes the "no live transcript" gap.
+1. Hands-on iPhone run of Milestone 3: enroll yourself from one recording, make a new recording, confirm the verify flow, reject a wrong suggestion, delete and re-add a person.
+2. Collect confirmations and rejections from real use; revisit the provisional thresholds with that data, then decide whether to validate and enable calibration.
+3. Benchmark diarization and matching on 10-, 30-, and 60-minute recordings on the iPhone.
+4. Milestone 4: `ConversationExport` (UTF-8 text and versioned JSON with identity state and provenance), transcript text editing, accessibility, offline acceptance run.
