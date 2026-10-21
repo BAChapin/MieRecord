@@ -140,7 +140,12 @@ public final class AppleSpeechTranscriptionEngine: StreamingTranscriptionEngine,
                 let range = Self.timeRange(from: result.range)
                 if let end = range?.end { progress(end) }
                 guard !text.isEmpty else { continue }
-                spans.append(TranscribedSpan(text: text, timeRange: range, confidence: Self.meanConfidence(of: result.text)))
+                spans.append(TranscribedSpan(
+                    text: text,
+                    timeRange: range,
+                    confidence: Self.meanConfidence(of: result.text),
+                    words: Self.words(from: result.text)
+                ))
             }
             return spans
         }
@@ -209,7 +214,12 @@ public final class AppleSpeechTranscriptionEngine: StreamingTranscriptionEngine,
         let text = String(result.text.characters)
         let range = Self.timeRange(from: result.range)
         if result.isFinal {
-            return .finalized(text: text, timeRange: range, confidence: Self.meanConfidence(of: result.text))
+            return .finalized(
+                text: text,
+                timeRange: range,
+                confidence: Self.meanConfidence(of: result.text),
+                words: Self.words(from: result.text)
+            )
         }
         return .volatile(text: text, timeRange: range)
     }
@@ -218,6 +228,27 @@ public final class AppleSpeechTranscriptionEngine: StreamingTranscriptionEngine,
         guard range.start.isNumeric, range.duration.isNumeric else { return nil }
         let start = range.start.seconds
         return TimeRange(start: start, end: start + range.duration.seconds)
+    }
+
+    /// Splits a result into timed words. The transcriber emits one attributed
+    /// run per word (with its leading space) carrying `audioTimeRange`; text
+    /// without timing (rare, e.g. trailing punctuation) is appended to the
+    /// previous word, or prepended to the next when it comes first.
+    static func words(from text: AttributedString) -> [TimedWord] {
+        var words: [TimedWord] = []
+        var pendingPrefix = ""
+        for run in text.runs {
+            let piece = String(text.characters[run.range])
+            if let cmRange = run.audioTimeRange, let range = timeRange(from: cmRange) {
+                words.append(TimedWord(text: pendingPrefix + piece, timeRange: range, confidence: run.transcriptionConfidence))
+                pendingPrefix = ""
+            } else if words.isEmpty {
+                pendingPrefix += piece
+            } else {
+                words[words.count - 1].text += piece
+            }
+        }
+        return words
     }
 
     /// Mean per-run transcription confidence, weighted by character count.

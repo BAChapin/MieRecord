@@ -1,54 +1,52 @@
 import ConversationCore
 import Foundation
 
-// Interfaces for post-recording speaker processing (SPEC §6). No implementation
-// ships in Milestone 1; they exist so the pipeline, storage, and UI can be built
-// against stable boundaries and so an engine can be swapped without touching the
-// domain model.
+// Interface for post-recording speaker processing (SPEC §6). The diarization
+// engine also supplies the speaker embeddings used for identity matching, so
+// clustering and matching share one embedding space.
 
 /// Produces speaker turns and recording-local clusters from a finished recording.
+///
+/// Implementations run fully on device once their model assets are present,
+/// read the audio file without modifying it, and report times on the file's
+/// own timeline. Cluster IDs only need to be unique within the result.
 public protocol SpeakerDiarizationEngine: Sendable {
     var descriptor: EngineDescriptor { get }
-    func diarize(audioURL: URL) async throws -> DiarizationResult
+    func availability() async -> EngineAvailability
+    /// Installs model assets when `availability()` is `.assetsRequired`.
+    func prepare() async throws
+    /// - Parameter progress: fraction complete in [0, 1], when the engine can tell.
+    func diarize(
+        audioURL: URL,
+        recordingID: UUID,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws -> DiarizationOutput
 }
 
-public struct DiarizationResult: Sendable, Equatable {
-    public var clusters: [SpeakerCluster]
-    public var turns: [SpeakerTurn]
+/// Diarization result: who spoke when, plus the per-window speaker embeddings
+/// identity matching uses. Window cluster IDs refer to `timeline` clusters.
+/// Engines that cannot produce embeddings return `voiceData == nil`, which
+/// leaves every speaker unidentified.
+public struct DiarizationOutput: Sendable, Equatable {
+    public var timeline: SpeakerTimeline
+    public var voiceData: RecordingVoiceData?
 
-    public init(clusters: [SpeakerCluster], turns: [SpeakerTurn]) {
-        self.clusters = clusters
-        self.turns = turns
+    public init(timeline: SpeakerTimeline, voiceData: RecordingVoiceData? = nil) {
+        self.timeline = timeline
+        self.voiceData = voiceData
     }
 }
 
-/// A fixed-length voice embedding plus the engine that produced it.
-public struct SpeakerEmbedding: Sendable, Equatable {
-    public var vector: [Float]
-    public var engine: EngineDescriptor
+public enum DiarizationError: Error, Equatable, Sendable, LocalizedError {
+    case audioFileUnreadable(String)
+    case modelUnavailable(String)
+    case engineFailure(String)
 
-    public init(vector: [Float], engine: EngineDescriptor) {
-        self.vector = vector
-        self.engine = engine
+    public var errorDescription: String? {
+        switch self {
+        case let .audioFileUnreadable(reason): "The audio file could not be read: \(reason)"
+        case let .modelUnavailable(reason): "The speaker model is unavailable: \(reason)"
+        case let .engineFailure(reason): reason
+        }
     }
-}
-
-/// Extracts one embedding per set of intervals (one cluster's speech).
-public protocol SpeakerEmbeddingEngine: Sendable {
-    var descriptor: EngineDescriptor { get }
-    func embed(audioURL: URL, intervals: [TimeRange]) async throws -> SpeakerEmbedding
-}
-
-/// Compares a cluster embedding against enrolled profiles and returns a
-/// **calibrated** candidate, or `nil` when no claim should be made.
-///
-/// Implementations are responsible for calibration and quality gates. Until a
-/// validated calibration exists, an implementation must return `nil` (or a
-/// candidate with `passedQualityChecks == false`) rather than expose raw
-/// similarity as confidence.
-public protocol SpeakerIdentityMatcher: Sendable {
-    func match(
-        _ embedding: SpeakerEmbedding,
-        against profiles: [SpeakerProfile]
-    ) async throws -> IdentityConfidencePolicy.Candidate?
 }

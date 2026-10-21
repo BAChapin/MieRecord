@@ -6,11 +6,15 @@ import Foundation
 public enum TranscriptionEvent: Sendable, Equatable {
     /// A provisional hypothesis for `timeRange` that may still change.
     case volatile(text: String, timeRange: TimeRange?)
-    /// Text for `timeRange` that will not change again.
-    case finalized(text: String, timeRange: TimeRange?, confidence: Double?)
+    /// Text for `timeRange` that will not change again, with per-word timing
+    /// when the engine provides it.
+    case finalized(text: String, timeRange: TimeRange?, confidence: Double?, words: [TimedWord] = [])
 }
 
 /// Whether an engine can run right now on this device.
+/// Shared by transcription and diarization engines.
+public typealias EngineAvailability = TranscriptionAvailability
+
 public enum TranscriptionAvailability: Sendable, Equatable {
     case available
     /// Supported, but on-device assets must be downloaded first.
@@ -59,11 +63,13 @@ public struct TranscribedSpan: Sendable, Equatable {
     public var timeRange: TimeRange?
     /// Engine transcription confidence in [0, 1], when reported.
     public var confidence: Double?
+    public var words: [TimedWord]
 
-    public init(text: String, timeRange: TimeRange?, confidence: Double?) {
+    public init(text: String, timeRange: TimeRange?, confidence: Double?, words: [TimedWord] = []) {
         self.text = text
         self.timeRange = timeRange
         self.confidence = confidence
+        self.words = words
     }
 }
 
